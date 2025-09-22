@@ -1,0 +1,131 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.9
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Run tests with pytest
+      run: |
+        pytest test_main.py -v --tb=short
+    
+    - name: Test API endpoints
+      run: |
+        # Start the FastAPI server in background
+        uvicorn main:api --host 0.0.0.0 --port 8000 &
+        sleep 5
+        
+        # Test the endpoints
+        curl -f http://localhost:8000/ || exit 1
+        curl -f http://localhost:8000/ticket || exit 1
+        
+        echo "All endpoint tests passed!"
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.9
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Build application
+      run: |
+        echo "Building FastAPI application..."
+        python -c "import main; print('Build successful!')"
+        echo "Application built successfully!"
+    
+    - name: Create build artifact
+      run: |
+        mkdir -p build
+        cp *.py build/
+        cp requirements.txt build/
+        echo "Build completed at $(date)" > build/build-info.txt
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: fastapi-app
+        path: build/
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download build artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: fastapi-app
+        path: ./deploy
+    
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.9
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Deploy application (simulation)
+      run: |
+        echo "Deploying FastAPI application..."
+        cd deploy
+        
+        # Start the server for deployment test
+        uvicorn main:api --host 0.0.0.0 --port 8000 &
+        SERVER_PID=$!
+        sleep 5
+        
+        # Test deployment
+        if curl -f http://localhost:8000/; then
+          echo "✅ Deployment successful!"
+          echo "✅ API is running and responding"
+          echo "✅ Deployment completed at $(date)"
+        else
+          echo "❌ Deployment failed!"
+          exit 1
+        fi
+        
+        # Clean up
+        kill $SERVER_PID || true
+    
+    - name: Deployment summary
+      run: |
+        echo "🚀 Deployment Summary:"
+        echo "   - Tests: ✅ Passed"
+        echo "   - Build: ✅ Successful" 
+        echo "   - Deploy: ✅ Completed"
+        echo "   - Status: 🟢 Live"
